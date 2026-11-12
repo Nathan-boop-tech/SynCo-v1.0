@@ -1,1 +1,4 @@
 .synthra_admin_token
+adapters/
+training/train.jsonl
+training/evaluation_results.json

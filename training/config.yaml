@@ -1,0 +1,10 @@
+base_model: Qwen/Qwen2.5-Coder-1.5B-Instruct
+lora_rank: 8
+lora_alpha: 16
+lora_dropout: 0.05
+learning_rate: 0.0002
+batch_size: 1
+max_steps: 100
+output_dir: adapters/synthra-lora
+train_file: training/train.jsonl
+validation_file: training/validation.jsonl

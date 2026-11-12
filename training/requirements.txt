@@ -1,0 +1,6 @@
+# Optional dependencies for local Hugging Face/PEFT training.
+datasets
+peft
+torch
+transformers
+trl

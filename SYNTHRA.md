@@ -1,4 +1,4 @@
-# Synthra v0.4
+# Synthra v0.5
 
 ## Identity
 Synthra is my personal multi-language coding agent.

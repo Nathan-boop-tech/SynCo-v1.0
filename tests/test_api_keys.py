@@ -252,7 +252,7 @@ def test_health_does_not_require_a_key(client: TestClient) -> None:
     response = client.get("/health")
 
     assert response.status_code == 200
-    assert response.json() == {"status": "ok", "service": "Synthra v0.4"}
+    assert response.json() == {"status": "ok", "service": "Synthra v0.5"}
 
 
 def test_legacy_api_module_exposes_the_new_server_app() -> None:

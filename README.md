@@ -1,9 +1,9 @@
-# Synthra v0.4
+# Synthra v0.5
 
 Synthra is a local, terminal-based multi-language coding agent. It uses
 [Ollama](https://ollama.com/) for local model inference and approval-gated tools
 to inspect a project, read files, make focused edits, run supported commands,
-and report results. Version 0.3 adds an optional FastAPI chat API protected by
+and report results. Version 0.3 added an optional FastAPI chat API protected by
 API keys. It does not use a hosted AI provider.
 
 ## Supported languages
@@ -203,9 +203,90 @@ Synthra keeps project learning data inside the current project:
   is retained for review but is not included unless explicitly approved in its
   record.
 
-Synthra v0.4 prepares examples only; it does not train a model. A later version
-can use reviewed examples to design and run a locally controlled training or
-fine-tuning workflow. No hosted AI provider is used.
+Synthra v0.4 prepared examples; v0.5 adds an opt-in local training pipeline.
+No training, model download, or Ollama model creation occurs automatically.
+
+## Train Synthra
+
+1. **What training means.** Training specializes Synthra using reviewed
+   examples from your own coding tasks. It improves behavior on those patterns;
+   it does not make Synthra as capable as every frontier model.
+2. **What LoRA means.** LoRA (Low-Rank Adaptation) trains a small set of extra
+   model weights rather than updating every weight in the original model.
+   Synthra keeps the original base model separate from the trained adapter.
+3. **Add good examples.** Add safe, reviewed JSONL records to
+   `training/examples.jsonl`. Each line must contain non-empty `instruction`,
+   `input`, and `output` strings. Keep private information and credentials out.
+   The initial file includes starter examples. Approved `/good` feedback is
+   also imported from `feedback/good_examples.jsonl`.
+4. **Prepare the dataset.** From the repository root, run:
+
+   ```bash
+   python training/prepare_dataset.py
+   ```
+
+   This filters malformed or credential-bearing examples, removes duplicates,
+   and creates `training/train.jsonl` and `training/validation.jsonl`.
+5. **Check dataset quality.** Review both generated files. Confirm the examples
+   are correct, safe, representative, and consistent; remove duplicates,
+   contradictory responses, and sensitive content.
+6. **Run a dry run.** Validate the datasets and see the planned settings without
+   downloading or training a model:
+
+   ```bash
+   python training/train_lora.py --dry-run
+   ```
+7. **Start real training later.** Install the optional Hugging Face training
+   dependencies and explicitly run the trainer:
+
+   ```bash
+   python -m pip install -r training/requirements.txt
+   python training/train_lora.py
+   ```
+
+   The training base defaults to `Qwen/Qwen2.5-Coder-1.5B-Instruct`. Override
+   it with `BASE_MODEL`; other settings include `TRAIN_FILE`,
+   `VALIDATION_FILE`, `OUTPUT_DIR`, `MAX_STEPS`, `LEARNING_RATE`, and
+   `BATCH_SIZE`. The default adapter output is `adapters/synthra-lora`.
+   Training downloads the selected base only when this real training command
+   is explicitly run. A compatible PyTorch/GPU setup may be needed.
+   More high-quality, consistent examples usually help more than a larger
+   collection of low-quality examples; real fine-tuning typically requires a
+   compatible GPU or rented GPU.
+8. **Evaluate the current model.** Configure Ollama and run:
+
+   ```bash
+   python training/evaluate_model.py
+   ```
+
+   It uses the model selected by `SYNTHRA_MODEL` (or the existing local
+   default), sends tasks only to local Ollama, and saves heuristic scores to
+   `training/evaluation_results.json`. Review responses; simple checks are not
+   a guarantee of quality or safety.
+9. **Export the trained model to Ollama.** First merge the LoRA adapter into
+   the exact base model used for training with Hugging Face PEFT, then prepare
+   the merged weights in a format supported by Ollama. Run the exporter to
+   generate a `Modelfile`; replace its placeholder `FROM` path with the actual
+   local merged-model path:
+
+   ```bash
+   python training/export_to_ollama.py
+   ollama create synthra-custom -f Modelfile
+   ```
+
+   `ollama create` is a separate, explicit command and is never run by the
+   exporter. The exporter explains the merge workflow and does not download,
+   merge, or install model weights.
+10. **Select the custom model** for local inference:
+
+   ```bash
+   export SYNTHRA_MODEL=synthra-custom
+   python agent.py
+   ```
+
+The pipeline uses Hugging Face Transformers, PEFT, TRL, and Datasets for
+optional local training. The small default base is configurable; Synthra does
+not automatically download large models or contact hosted AI providers.
 
 ## Language detection and tools
 
@@ -234,20 +315,23 @@ database.
 
 ## Creating a custom Ollama model later
 
-`Modelfile` contains the future Synthra system prompt and uses the default
-Qwen model as its base. Model creation is intentionally not run by this
-version. After pulling the base model, you can create the custom model later:
+`Modelfile` is generated with a placeholder path for a merged local model.
+After training, merge the LoRA adapter into its original base, prepare that
+merged model in a format supported by Ollama, then replace the placeholder.
+Model creation is always a separate, explicit step:
 
 ```bash
-ollama create synthra -f Modelfile
+python training/export_to_ollama.py
+ollama create synthra-custom -f Modelfile
 ```
 
-Then select it by setting `SYNTHRA_MODEL=synthra`.
+Select it by setting `SYNTHRA_MODEL=synthra-custom`. See [Train Synthra](#train-synthra)
+for the complete training and export process.
 
 ## Tests
 
 ```bash
-python -m py_compile *.py
+python -m py_compile *.py training/*.py
 pytest -q
 ```
 
