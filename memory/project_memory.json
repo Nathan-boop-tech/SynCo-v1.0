@@ -1,0 +1,29 @@
+{
+  "project_name": "Synthra",
+  "main_languages": [
+    "Python",
+    "JavaScript"
+  ],
+  "important_files": [
+    "agent.py",
+    "tools.py",
+    "save_training_example.py",
+    "languages.py",
+    "api.py"
+  ],
+  "coding_rules": [
+    "Inspect the project and detect its language before making changes.",
+    "Ask for approval before writing files or running commands.",
+    "Run relevant tests, read errors, and fix mistakes."
+  ],
+  "past_decisions": [
+    "Use local Ollama inference; do not add hosted AI providers.",
+    "Keep API keys and approval-gated tools."
+  ],
+  "known_bugs": [],
+  "completed_tasks": [
+    "Synthra v0.3 provides a local coding agent and optional API-key-protected chat API.",
+    "Synthra v0.4 adds project memory, knowledge search, feedback capture, training-data preparation, and dry-run mode."
+  ],
+  "facts": []
+}

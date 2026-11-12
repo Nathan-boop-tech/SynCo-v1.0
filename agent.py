@@ -1,5 +1,6 @@
 """Synthra, a local multi-language coding agent powered by Ollama."""
 
+import argparse
 import json
 import os
 from typing import Any
@@ -7,6 +8,7 @@ from typing import Any
 import ollama
 
 import tools as project_tools
+from save_training_example import convert_approved_feedback
 
 DEFAULT_MODEL = "qwen2.5-coder:7b"
 FALLBACK_MODEL = "llama3.2:3b"
@@ -98,6 +100,57 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "remember_fact",
+            "description": "Save a project fact in persistent memory after user approval.",
+            "parameters": {
+                "type": "object",
+                "properties": {"fact": {"type": "string"}},
+                "required": ["fact"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "recall_memory",
+            "description": "Recall project facts and notes relevant to a topic.",
+            "parameters": {
+                "type": "object",
+                "properties": {"topic": {"type": "string"}},
+                "required": ["topic"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "update_project_memory",
+            "description": "Update a supported project-memory topic after user approval.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "topic": {"type": "string"},
+                    "content": {"type": "string"},
+                },
+                "required": ["topic", "content"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "search_knowledge",
+            "description": "Search the project's local knowledge files before answering difficult questions.",
+            "parameters": {
+                "type": "object",
+                "properties": {"query": {"type": "string"}},
+                "required": ["query"],
+            },
+        },
+    },
 ]
 TOOL_FUNCTIONS = {
     "list_files": project_tools.list_files,
@@ -107,6 +160,17 @@ TOOL_FUNCTIONS = {
     "run_tests": project_tools.run_tests,
     "detect_language": project_tools.detect_language,
     "get_language_rules": project_tools.get_language_rules,
+    "remember_fact": project_tools.remember_fact,
+    "recall_memory": project_tools.recall_memory,
+    "update_project_memory": project_tools.update_project_memory,
+    "search_knowledge": project_tools.search_knowledge,
+}
+MUTATING_TOOLS = {
+    "write_file",
+    "run_command",
+    "run_tests",
+    "remember_fact",
+    "update_project_memory",
 }
 
 
@@ -126,12 +190,28 @@ def _tool_arguments(raw_arguments: Any) -> dict[str, Any]:
     raise ValueError("tool arguments must be a JSON object")
 
 
-def _execute_tool(name: str, raw_arguments: Any) -> str:
+def _execute_tool(name: str, raw_arguments: Any, dry_run: bool = False) -> str:
     function = TOOL_FUNCTIONS.get(name)
     if function is None:
         return f"Error: unknown tool: {name}"
     try:
         arguments = _tool_arguments(raw_arguments)
+        if dry_run and name in MUTATING_TOOLS:
+            if name == "write_file":
+                return project_tools.preview_write_file(**arguments)
+            if name == "run_command":
+                return f"Dry run: would run command: {arguments.get('command', '')}"
+            if name == "run_tests":
+                return f"Dry run: would run tests for {arguments.get('language', '')}."
+            if name == "remember_fact":
+                return (
+                    "Dry run: would save this fact to memory/project_memory.json: "
+                    f"{arguments.get('fact', '')}"
+                )
+            return (
+                "Dry run: would update memory/project_memory.json topic "
+                f"{arguments.get('topic', '')} with: {arguments.get('content', '')}"
+            )
         result = function(**arguments)
     except (TypeError, ValueError, json.JSONDecodeError) as error:
         return f"Error: invalid arguments for {name}: {error}"
@@ -148,10 +228,11 @@ def _system_prompt() -> str:
         "Workflow for each coding request:\n"
         "1. Inspect the project with list_files and detect_language before proposing edits.\n"
         "2. If multiple languages are relevant and the request does not identify one, ask the user.\n"
-        "3. Read the necessary files and state a short `Plan:` before requesting any write or command.\n"
-        "4. Use only the detected language's toolchain; explain missing tools without installing them.\n"
-        "5. After approved edits, run the appropriate tests when configured, inspect failures, and make focused fixes.\n"
-        "6. Finish with what changed, files, commands, errors, and what to check next.\n"
+        "3. Read the necessary files, make a short `Plan:`, and ask for approval before changes or commands.\n"
+        "4. Make approved changes, then run tests and read their errors; fix mistakes and retest.\n"
+        "5. Search the knowledge files with search_knowledge before answering difficult project questions.\n"
+        "6. Use only the detected language's toolchain; explain missing tools without installing them.\n"
+        "7. Finish with what changed, files, commands, errors, and what to check next.\n"
         "Do not claim an action succeeded unless its tool reports success. "
         "Respect explicit requests not to use tools."
     )
@@ -173,7 +254,9 @@ def _message_dict(message: Any) -> dict[str, Any]:
     }
 
 
-def _call_tool(call: Any) -> tuple[str, str, str]:
+def _call_tool(
+    call: Any, dry_run: bool = False, blocked_reason: str | None = None
+) -> tuple[str, str, str]:
     function_call = _value(call, "function", {})
     name = _value(function_call, "name", "")
     raw_arguments = _value(function_call, "arguments", {})
@@ -182,7 +265,9 @@ def _call_tool(call: Any) -> tuple[str, str, str]:
         arguments = _tool_arguments(raw_arguments)
     except (TypeError, ValueError, json.JSONDecodeError) as error:
         return name, "{}", f"Error: invalid arguments for {name}: {error}"
-    result = _execute_tool(name, arguments)
+    if blocked_reason:
+        return name, json.dumps(arguments, ensure_ascii=False), blocked_reason
+    result = _execute_tool(name, arguments, dry_run=dry_run)
     return name, json.dumps(arguments, ensure_ascii=False), result
 
 
@@ -197,6 +282,13 @@ def _print_summary(
     for name, _argument_json, result in results:
         if name == "write_file" and result.startswith("File written: "):
             changed_files.append(result.removeprefix("File written: "))
+        elif name == "write_file" and result.startswith("Dry run: would "):
+            changed_files.append(result.splitlines()[0].removeprefix("Dry run: would "))
+        elif name in {"remember_fact", "update_project_memory"}:
+            if result.startswith("Project memory updated: "):
+                changed_files.append(result.removeprefix("Project memory updated: "))
+            elif result.startswith("Dry run: would "):
+                changed_files.append("memory/project_memory.json (dry-run preview)")
         if name in {"run_command", "run_tests"}:
             command_line = next(
                 (line for line in result.splitlines() if line.startswith("Command executed: ")),
@@ -264,13 +356,28 @@ def _select_model(client: Any, requested_model: str) -> str:
 
 
 def handle_request(
-    history: list[dict[str, Any]], user_text: str, model: str, client: Any
-) -> None:
+    history: list[dict[str, Any]],
+    user_text: str,
+    model: str,
+    client: Any,
+    dry_run: bool = False,
+) -> str:
     """Handle a request, executing at most ten model tool-call rounds."""
-    history.append({"role": "user", "content": user_text})
+    model_user_text = user_text
+    if dry_run:
+        files = project_tools.list_files(".")
+        languages = project_tools.detect_language(".")
+        print(f"\n--- Dry-run project inspection ---\n{files}")
+        print(f"Detected languages: {languages}")
+        model_user_text = (
+            f"{user_text}\n\n"
+            "Dry-run preflight (already inspected; do not write files or run commands):\n"
+            f"Project files:\n{files}\nDetected languages: {languages}"
+        )
+    history.append({"role": "user", "content": model_user_text})
     results: list[tuple[str, str, str]] = []
-    project_inspected = False
-    language_detected = False
+    project_inspected = dry_run
+    language_detected = dry_run
     plan_presented = False
     for _ in range(MAX_TOOL_ROUNDS):
         try:
@@ -298,7 +405,7 @@ def handle_request(
             print(f"\n{answer}")
             results.append(("ollama", "{}", f"Error: {answer}"))
             _print_summary(results, answer, round_limit_reached=False)
-            return
+            return answer
 
         message = _value(response, "message", {})
         history.append(_message_dict(message))
@@ -308,25 +415,37 @@ def handle_request(
             if answer:
                 print(f"\nSynthra: {answer}")
             _print_summary(results, answer, round_limit_reached=False)
-            return
+            return answer
 
         content = _value(message, "content", "") or ""
         if content:
             print(f"\nSynthra: {content}")
             plan_presented = plan_presented or "plan:" in content.lower()
         for call in calls:
-            name, argument_json, result = _call_tool(call)
+            requested_name = _value(
+                _value(call, "function", {}), "name", ""
+            )
+            blocked_reason = None
+            if requested_name in {"write_file", "run_command", "run_tests"}:
+                if not project_inspected:
+                    blocked_reason = (
+                        "Error: inspect the project with list_files before making "
+                        "changes or running commands."
+                    )
+                elif not language_detected:
+                    blocked_reason = (
+                        "Error: detect the project language before making changes "
+                        "or running commands."
+                    )
+                elif not plan_presented:
+                    blocked_reason = (
+                        "Error: state a short Plan: before requesting a write or command."
+                    )
+            name, argument_json, result = _call_tool(call, dry_run, blocked_reason)
             if name == "list_files" and not result.startswith("Error:"):
                 project_inspected = True
             elif name == "detect_language" and not result.startswith("Error:"):
                 language_detected = True
-            if name in {"write_file", "run_command", "run_tests"}:
-                if not project_inspected:
-                    result = "Error: inspect the project with list_files before making changes or running commands."
-                elif not language_detected:
-                    result = "Error: detect the project language before making changes or running commands."
-                elif not plan_presented:
-                    result = "Error: state a short Plan: before requesting a write or command."
             results.append((name, argument_json, result))
             print(f"Tool result:\n{result}")
             history.append({"role": "tool", "name": name, "content": result})
@@ -334,10 +453,57 @@ def handle_request(
     answer = "I stopped because this request reached the tool-call round limit."
     print(f"\nSynthra: {answer}")
     _print_summary(results, answer, round_limit_reached=True)
+    return answer
 
 
-def main() -> None:
+def _handle_feedback_command(
+    command: str,
+    last_request: str,
+    last_response: str,
+    dry_run: bool = False,
+) -> bool:
+    if command not in {"/good", "/bad", "/save-example"}:
+        return False
+    if dry_run:
+        print("Dry run: feedback commands do not write files.")
+        return True
+    if not last_request or not last_response:
+        print("There is no completed request and response to save yet.")
+        return True
+    if command == "/good":
+        print(project_tools.save_good_feedback(last_request, last_response))
+    elif command == "/bad":
+        reason = input("What was wrong with Synthra's response? ").strip()
+        if not reason:
+            print("Bad feedback was not saved because no explanation was provided.")
+            return True
+        print(project_tools.save_bad_feedback(last_request, last_response, reason))
+    else:
+        approval = input("Save the last interaction as a training example? (yes/no) ")
+        if approval.strip().lower() not in {"yes", "y"}:
+            print("Training example not saved.")
+            return True
+        saved = project_tools.save_good_feedback(last_request, last_response)
+        print(saved)
+        if saved.startswith("Saved "):
+            try:
+                count = convert_approved_feedback()
+            except (OSError, ValueError) as error:
+                print(f"Error creating training example: {error}")
+            else:
+                print(f"Created {count} training example(s).")
+    return True
+
+
+def main(argv: list[str] | None = None) -> None:
     """Run Synthra's interactive terminal chat."""
+    parser = argparse.ArgumentParser(description="Run the local Synthra coding agent.")
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="inspect and preview planned changes without writing files or running commands",
+    )
+    arguments = parser.parse_args(argv)
     requested_model = os.environ.get("SYNTHRA_MODEL", DEFAULT_MODEL)
     host = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
     client = ollama.Client(host=host)
@@ -348,7 +514,10 @@ def main() -> None:
     history: list[dict[str, Any]] = [{"role": "system", "content": system_prompt}]
     model = _select_model(client, requested_model)
 
-    print(f"Synthra is ready (local Ollama model: {model}). Type /exit to quit.")
+    mode = " (dry-run: no files will be written and no commands will run)" if arguments.dry_run else ""
+    print(f"Synthra is ready (local Ollama model: {model}){mode}. Type /exit to quit.")
+    last_request = ""
+    last_response = ""
     while True:
         try:
             user_text = input("\nYou: ").strip()
@@ -360,7 +529,14 @@ def main() -> None:
             return
         if not user_text:
             continue
-        handle_request(history, user_text, model, client)
+        if _handle_feedback_command(
+            user_text, last_request, last_response, dry_run=arguments.dry_run
+        ):
+            continue
+        last_request = user_text
+        last_response = handle_request(
+            history, user_text, model, client, dry_run=arguments.dry_run
+        )
 
 
 if __name__ == "__main__":

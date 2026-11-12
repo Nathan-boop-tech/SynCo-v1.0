@@ -1,4 +1,4 @@
-# Synthra v0.3
+# Synthra v0.4
 
 Synthra is a local, terminal-based multi-language coding agent. It uses
 [Ollama](https://ollama.com/) for local model inference and approval-gated tools
@@ -174,6 +174,38 @@ Example requests:
 - `Explain what the Go files in this project do.`
 - `Fix the failing Python test.` Synthra inspects the project and asks before
   writing files or running commands.
+
+Use `python agent.py --dry-run` to inspect the project and preview proposed file
+changes without writing files or running commands. Dry-run still uses the
+configured local Ollama model.
+
+## Teaching Synthra
+
+Synthra keeps project learning data inside the current project:
+
+- **Memory** is stored in `memory/project_memory.json`. It records the project
+  name, main languages, important files, coding rules, past decisions, known
+  bugs, completed tasks, and additional facts. Synthra can save and recall
+  memory with its tools; memory updates ask for approval.
+- **Knowledge** lives in `knowledge/coding_rules.md`,
+  `knowledge/project_notes.md`, and `knowledge/app_apis.md`. Add or edit
+  Markdown notes there. Synthra searches these files before answering difficult
+  project questions.
+- **Feedback** is saved as JSON Lines in `feedback/good_examples.jsonl` and
+  `feedback/bad_examples.jsonl`. After a response, enter `/good` to keep it as
+  a positive example or `/bad` to record it with an explanation of what was
+  wrong. `/save-example` asks for confirmation, saves the last interaction as
+  approved positive feedback, and converts approved feedback into training
+  data.
+- **Training preparation** is stored in `training_data/examples.jsonl`. Run
+  `python save_training_example.py` to convert approved feedback; each
+  resulting JSONL record has `instruction`, `input`, and `output`. Bad feedback
+  is retained for review but is not included unless explicitly approved in its
+  record.
+
+Synthra v0.4 prepares examples only; it does not train a model. A later version
+can use reviewed examples to design and run a locally controlled training or
+fine-tuning workflow. No hosted AI provider is used.
 
 ## Language detection and tools
 

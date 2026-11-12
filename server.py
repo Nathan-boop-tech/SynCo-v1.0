@@ -37,7 +37,7 @@ _COMMON_TOKEN = re.compile(
     r"github_pat_[A-Za-z0-9_]{20,}|xox[baprs]-[A-Za-z0-9-]{20,})\b"
 )
 
-app = FastAPI(title="Synthra API", version="0.3.0")
+app = FastAPI(title="Synthra API", version="0.4.0")
 rate_limiter = RateLimiter(limit=API_RATE_LIMIT, window_seconds=60.0)
 
 
@@ -201,7 +201,7 @@ def _call_local_model(message: str) -> tuple[str, str]:
 
 @app.get("/health")
 def health() -> dict[str, str]:
-    return {"status": "ok", "service": "Synthra v0.3"}
+    return {"status": "ok", "service": "Synthra v0.4"}
 
 
 @app.post(
