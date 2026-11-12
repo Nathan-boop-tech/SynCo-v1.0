@@ -54,40 +54,32 @@ The optional FastAPI server lets approved apps chat with Synthra through the
 local Ollama model. API clients get chat-only access: they cannot use the
 coding agent's file-writing or command-running tools.
 
-Install dependencies and start local Ollama as described above. Set an admin
-token in the process environment; generate a new random value for your setup:
+Install dependencies and start local Ollama as described above. From the
+repository directory, start the API and generate a local admin token:
 
 ```bash
-export ADMIN_TOKEN="$(openssl rand -hex 32)"
-export SYNTHRA_MODEL="qwen2.5-coder:7b"
-export OLLAMA_HOST="http://localhost:11434"
+./setup_api_key.sh
 ```
 
-Keep the admin token secret. Do not put real admin or app keys in source code,
-Git, `.env`, or other plain-text configuration. `.env.example` contains only a
-placeholder. If the default Qwen model cannot start and `llama3.2:3b` is
-installed, the server retries with that local fallback.
+The script saves the admin token in `.synthra_admin_token` with owner-only
+permissions and starts the server at `http://127.0.0.1:8000`. The token file is
+ignored by Git. Keep it private; do not put real admin or app keys in source
+code, Git, or `.env`. If `ADMIN_TOKEN` is already set, the script uses and
+saves that value instead of generating a new one. If the default Qwen model
+cannot start and `llama3.2:3b` is installed, the server retries with that local
+fallback.
 
-Start the server bound to localhost:
+Create a separate key for each app from a second terminal:
 
 ```bash
-uvicorn server:app --host 127.0.0.1 --port 8000 --no-access-log
+./create_api_key.sh "My iPad App"
 ```
 
-Create a separate key for each app:
-
-```bash
-curl -X POST http://localhost:8000/admin/keys \
-  -H "Authorization: Bearer $ADMIN_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"name": "My iPad App", "scopes": ["chat"]}'
-```
-
-The response contains the full `synthra_live_...` key once. Save it securely;
-the JSON key store contains only its SHA-256 hash and metadata. The default
-store is `~/.synthra/api_keys.json`; set `SYNTHRA_API_KEYS_FILE` to choose a
-different path. The file and its parent directory are created with owner-only
-permissions.
+Copy and save the printed `synthra_live_...` key securely; it is shown only
+once. The JSON key store contains only its SHA-256 hash and metadata. The
+default store is `~/.synthra/api_keys.json`; set `SYNTHRA_API_KEYS_FILE` to
+choose a different path. The file and its parent directory are created with
+owner-only permissions.
 
 Call the chat endpoint with the app key:
 
@@ -106,6 +98,8 @@ pattern-based redaction can identify every possible secret format.
 List key metadata or revoke a key with the admin token:
 
 ```bash
+export ADMIN_TOKEN="$(<.synthra_admin_token)"
+
 curl http://localhost:8000/admin/keys \
   -H "Authorization: Bearer $ADMIN_TOKEN"
 
@@ -123,11 +117,11 @@ minute and when the server restarts; it is intended for a single server
 process, not a multi-worker deployment. The JSON key store coordinates writes
 within that process only, so run one worker to avoid cross-process update races.
 
-`/health` is public and does not need a key. The server requires
-`ADMIN_TOKEN`; if it is missing, admin operations return a clear configuration
-error. The example binds to loopback so local apps can connect. For remote
-apps, put the service behind HTTPS and appropriate network controls rather
-than exposing the development server directly.
+`/health` is public and does not need a key. The setup script configures
+`ADMIN_TOKEN` for the server automatically. The server binds to loopback so
+local apps can connect. For remote apps, put the service behind HTTPS and
+appropriate network controls rather than exposing the development server
+directly.
 
 To add another app later, repeat `POST /admin/keys` with a distinct name,
 securely deliver the one-time key to that app, and revoke it independently if
